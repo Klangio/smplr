@@ -3,6 +3,7 @@ import { VoiceParams } from "./types";
 import {
   AdsrTimes,
   EnvelopeMapping,
+  adsrValueAt,
   computeAdsrTimes,
   hasAdsrShape,
   scheduleAdsr,
@@ -381,22 +382,33 @@ export class Voice {
     // Before it sounds: cancel it entirely, same as stop()
     if (time <= this.#startAt) return this.stop(time);
 
-    // Where the envelope is at `time`: flat until the release starts, then falling linearly.
-    const releaseAt = this.#releaseAt;
-    const level =
-      releaseAt === undefined || time <= releaseAt
-        ? 1.0
-        : Math.max(0, 1 - (time - releaseAt) / this.#ampRelease);
+    const level = this.#ampLevelAt(time);
 
     this.#state = "stopping";
     this.#releaseAt = time;
     this.#ampRelease = fade;
 
+    // Keep the envelope's curve up to `time` (cancelling drops the attack/decay ramp that was
+    // still running), then fade from where it got to - see scheduleAdsrRelease.
     const stopAt = time + fade;
     this.#envelope.gain.cancelScheduledValues(time);
-    this.#envelope.gain.setValueAtTime(level, time);
+    this.#envelope.gain.linearRampToValueAtTime(level, time);
     this.#envelope.gain.linearRampToValueAtTime(0, stopAt);
     this.#source.stop(stopAt);
+    this.#lfoOscillators.forEach((osc) => osc.stop(stopAt));
+  }
+
+  /**
+   * The amplitude envelope's value at `time`: the ADSR curve until the release starts, then the
+   * linear release ramp from wherever the curve was.
+   */
+  #ampLevelAt(time: number): number {
+    const releaseAt = this.#releaseAt;
+    if (releaseAt === undefined || time <= releaseAt) {
+      return adsrValueAt(this.#ampEnvTimes, time);
+    }
+    const fromRelease = adsrValueAt(this.#ampEnvTimes, releaseAt);
+    return fromRelease * Math.max(0, 1 - (time - releaseAt) / this.#ampRelease);
   }
 
   /**

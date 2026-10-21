@@ -1080,7 +1080,7 @@ describe("steal()", () => {
     voice.steal(1);
 
     expect(envelope.gain.cancelScheduledValues).toHaveBeenCalledWith(1);
-    expect(envelope.gain.setValueAtTime).toHaveBeenCalledWith(1.0, 1);
+    expect(envelope.gain.linearRampToValueAtTime).toHaveBeenCalledWith(1.0, 1);
     expect(envelope.gain.linearRampToValueAtTime).toHaveBeenCalledWith(0, 1.01);
     expect(sources[0].stoppedAt).toBe(1.01);
     expect(voice.endTime).toBe(1.01);
@@ -1104,7 +1104,52 @@ describe("steal()", () => {
 
     voice.steal(2); // a quarter of the way down
 
-    expect(envelope.gain.setValueAtTime).toHaveBeenLastCalledWith(0.75, 2);
+    expect(envelope.gain.linearRampToValueAtTime).toHaveBeenCalledWith(0.75, 2);
+  });
+
+  it("starts from the sustain level, not full volume (no click)", () => {
+    const { voice, gains } = makeVoice(
+      { ampDecay: 0.1, ampSustain: 0.4 },
+      { currentTime: 0 },
+    );
+
+    voice.steal(1); // well past the decay
+
+    expect(gains[1].gain.linearRampToValueAtTime).toHaveBeenCalledWith(0.4, 1);
+  });
+
+  it("starts from the attack's value when stolen mid-attack", () => {
+    const { voice, gains } = makeVoice({ ampAttack: 1 }, { currentTime: 0 });
+
+    voice.steal(0.5);
+
+    expect(gains[1].gain.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0.5,
+      0.5,
+    );
+  });
+
+  it("starts from where an ADSR release has got to", () => {
+    const { voice, gains } = makeVoice(
+      { ampDecay: 0.1, ampSustain: 0.4, ampRelease: 4 },
+      { currentTime: 0 },
+    );
+    voice.stop(1); // falls 0.4 -> 0 over 1..5
+
+    voice.steal(3); // halfway down: 0.2
+
+    expect(gains[1].gain.linearRampToValueAtTime).toHaveBeenCalledWith(0.2, 3);
+  });
+
+  it("stops its LFOs with the source", () => {
+    const { voice, oscillators } = makeVoice(
+      { modLfoToPitch: 100 },
+      { currentTime: 0 },
+    );
+
+    voice.steal(1);
+
+    expect(oscillators[0].stoppedAt).toBe(1.01);
   });
 
   it("uses a custom fade time", () => {
