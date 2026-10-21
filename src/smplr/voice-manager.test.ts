@@ -1,3 +1,4 @@
+import { Voice } from "./voice";
 import { VoiceManager } from "./voice-manager";
 
 // ---------------------------------------------------------------------------
@@ -11,6 +12,7 @@ function makeVoice(
   stopId: string | number;
   group: number | undefined;
   stop: jest.Mock;
+  steal: jest.Mock;
   onEnded: (cb: () => void) => void;
   /** Simulate the Web Audio engine firing onended */
   triggerEnded: () => void;
@@ -20,6 +22,7 @@ function makeVoice(
     stopId,
     group,
     stop: jest.fn(),
+    steal: jest.fn(),
     onEnded(cb: () => void) {
       endedCb = cb;
     },
@@ -279,9 +282,20 @@ describe("maxVoices", () => {
     mgr.add(b as any);
     mgr.add(c as any);
 
-    expect(a.stop).toHaveBeenCalledWith(3);
-    expect(b.stop).not.toHaveBeenCalled();
-    expect(c.stop).not.toHaveBeenCalled();
+    expect(a.steal).toHaveBeenCalledWith(3);
+    expect(b.steal).not.toHaveBeenCalled();
+    expect(c.steal).not.toHaveBeenCalled();
+  });
+
+  it("cancels the newest voices when several start at the same time (a chord)", () => {
+    const mgr = new VoiceManager(2);
+    const chord = [60, 64, 67, 72].map((n) => playing(String(n), 1));
+    chord.forEach((v) => mgr.add(v as any));
+
+    expect(chord[0].steal).not.toHaveBeenCalled();
+    expect(chord[1].steal).not.toHaveBeenCalled();
+    expect(chord[2].steal).toHaveBeenCalledWith(1);
+    expect(chord[3].steal).toHaveBeenCalledWith(1);
   });
 
   it("never releases the voice being added at its own start time", () => {
@@ -291,8 +305,8 @@ describe("maxVoices", () => {
     const later = playing("later", 3);
     mgr.add(later as any);
 
-    expect(earlier.stop).toHaveBeenCalledWith(3);
-    expect(later.stop).not.toHaveBeenCalled();
+    expect(earlier.steal).toHaveBeenCalledWith(3);
+    expect(later.steal).not.toHaveBeenCalled();
   });
 
   it("picks the earliest start among voices already sounding, not creation order", () => {
@@ -304,8 +318,8 @@ describe("maxVoices", () => {
     mgr.add(a as any);
     mgr.add(c as any);
 
-    expect(a.stop).toHaveBeenCalledWith(3);
-    expect(b.stop).not.toHaveBeenCalled();
+    expect(a.steal).toHaveBeenCalledWith(3);
+    expect(b.steal).not.toHaveBeenCalled();
   });
 
   it("counts notes with a duration (a stop already scheduled) while they are still audible", () => {
@@ -318,7 +332,7 @@ describe("maxVoices", () => {
     mgr.add(b as any);
     mgr.add(c as any);
 
-    expect(a.stop).toHaveBeenCalledWith(2);
+    expect(a.steal).toHaveBeenCalledWith(2);
   });
 
   it("counts voices that are releasing but still audible when the new one starts", () => {
@@ -328,7 +342,7 @@ describe("maxVoices", () => {
     mgr.add(releasing as any);
     mgr.add(next as any);
 
-    expect(releasing.stop).toHaveBeenCalledWith(2);
+    expect(releasing.steal).toHaveBeenCalledWith(2);
   });
 
   it("doesn't count voices that have finished before the new one starts", () => {
@@ -338,7 +352,7 @@ describe("maxVoices", () => {
     mgr.add(done as any);
     mgr.add(next as any);
 
-    expect(done.stop).not.toHaveBeenCalled();
+    expect(done.steal).not.toHaveBeenCalled();
   });
 
   it("can release several voices when one added voice overlaps more than one start", () => {
@@ -347,15 +361,15 @@ describe("maxVoices", () => {
     const q = playing("q", 11);
     mgr.add(p as any);
     mgr.add(q as any); // releases p at 11
-    p.stop.mockClear();
+    p.steal.mockClear();
 
     // starts first and stays open: sounds with p at 10 and (the mock doesn't end p) with q at 11
     const r = playing("r", 1);
     mgr.add(r as any);
 
-    expect(r.stop).toHaveBeenCalledWith(10);
-    expect(p.stop).toHaveBeenCalledWith(11);
-    expect(q.stop).not.toHaveBeenCalled();
+    expect(r.steal).toHaveBeenCalledWith(10);
+    expect(p.steal).toHaveBeenCalledWith(11);
+    expect(q.steal).not.toHaveBeenCalled();
   });
 
   it("prefers voices that are already releasing", () => {
@@ -367,8 +381,8 @@ describe("maxVoices", () => {
 
     mgr.add(playing("new", 3) as any);
 
-    expect(releasing.stop).toHaveBeenCalledWith(3);
-    expect(old.stop).not.toHaveBeenCalled();
+    expect(releasing.steal).toHaveBeenCalledWith(3);
+    expect(old.steal).not.toHaveBeenCalled();
   });
 
   it("limits voices added out of order: the older voice is released when the later one starts", () => {
@@ -378,8 +392,8 @@ describe("maxVoices", () => {
     mgr.add(later as any);
     mgr.add(earlier as any); // starts first, still sounding when `later` starts
 
-    expect(earlier.stop).toHaveBeenCalledWith(5);
-    expect(later.stop).not.toHaveBeenCalled();
+    expect(earlier.steal).toHaveBeenCalledWith(5);
+    expect(later.steal).not.toHaveBeenCalled();
   });
 
   it("doesn't look at the voices at all when there is no cap", () => {
@@ -393,11 +407,130 @@ describe("maxVoices", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it.each([0, -1, 0.5, NaN])(
+    "treats maxVoices %p as unlimited",
+    (maxVoices) => {
+      const mgr = new VoiceManager(maxVoices);
+      const voices = [1, 2, 3].map((t) => playing(String(t), t));
+      voices.forEach((v) => mgr.add(v as any));
+
+      expect(voices.every((v) => v.steal.mock.calls.length === 0)).toBe(true);
+    },
+  );
+
+  it("rounds a non-integer cap down", () => {
+    const mgr = new VoiceManager(1.9);
+    const a = playing("a", 1);
+    const b = playing("b", 2);
+    mgr.add(a as any);
+    mgr.add(b as any);
+
+    expect(a.steal).toHaveBeenCalledWith(2); // cap is 1, not 2
+  });
+
   it("is unlimited when omitted", () => {
     const mgr = new VoiceManager();
     const voices = Array.from({ length: 200 }, (_, i) => playing(String(i), i));
     voices.forEach((v) => mgr.add(v as any));
 
     expect(voices.every((v) => v.stop.mock.calls.length === 0)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// maxVoices with real Voice objects
+//
+// The mocks above fake stop() without touching endTime, so they can't show whether
+// stopping a voice really shortens it. These use the real Voice.
+// ---------------------------------------------------------------------------
+
+describe("maxVoices with real voices", () => {
+  const param = () => ({
+    value: 1,
+    cancelScheduledValues: jest.fn(),
+    setValueAtTime: jest.fn(),
+    linearRampToValueAtTime: jest.fn(),
+  });
+  const node = () => ({ connect: jest.fn(), disconnect: jest.fn() });
+
+  /** Just enough of an AudioContext for Voice: nothing is rendered. */
+  const context = {
+    currentTime: 0,
+    createBufferSource: () => ({
+      ...node(),
+      detune: param(),
+      playbackRate: param(),
+      start: jest.fn(),
+      stop: jest.fn(),
+    }),
+    createGain: () => ({ ...node(), gain: param() }),
+  } as unknown as BaseAudioContext;
+  const buffer = { duration: 10 } as AudioBuffer;
+  const destination = {} as AudioNode;
+
+  function setup(maxVoices: number, ampRelease: number) {
+    const manager = new VoiceManager(maxVoices);
+    const voices: Voice[] = [];
+    const params = {
+      detune: 0,
+      velocity: 100,
+      volume: 0,
+      ampRelease,
+      ampAttack: 0,
+      lpfCutoffHz: 20000,
+      offset: 0,
+      loop: false,
+      loopStart: 0,
+      loopEnd: 0,
+    };
+    return {
+      voices,
+      add(startTime: number, stopAt?: number) {
+        const voice = new Voice(
+          context,
+          buffer,
+          params,
+          destination,
+          `n${voices.length}`,
+          undefined,
+          startTime,
+        );
+        if (stopAt !== undefined) voice.stop(stopAt);
+        voices.push(voice);
+        manager.add(voice);
+        return voice;
+      },
+      /** how many voices are audible at time `t` */
+      soundingAt: (t: number) =>
+        voices.filter((v) => v.startTime <= t && v.endTime > t).length,
+    };
+  }
+
+  it("keeps the cap while earlier voices are still fading out (long release tail)", () => {
+    const { add, soundingAt } = setup(1, 5);
+    add(0, 1); // released at 1, fades until 6
+    add(2);
+    add(3);
+
+    expect(soundingAt(3.5)).toBeLessThanOrEqual(1);
+  });
+
+  it("releases an older voice before cancelling chord notes", () => {
+    const { add, voices, soundingAt } = setup(2, 0.3);
+    add(0); // older, still playing
+    [60, 64, 67].forEach(() => add(1)); // chord
+
+    expect(soundingAt(1.5)).toBe(2);
+    expect(voices[0].endTime).toBeCloseTo(1.01); // the older voice went first
+    expect(voices[1].endTime).toBe(Infinity); // first chord note survives
+    expect(voices[2].endTime).toBe(Infinity);
+    expect(voices[3].endTime).toBe(1); // newest chord note cancelled
+  });
+
+  it("keeps the cap when several voices start at the same time (a chord)", () => {
+    const { add, soundingAt } = setup(2, 0.3);
+    [60, 64, 67, 72].forEach(() => add(1));
+
+    expect(soundingAt(1.5)).toBeLessThanOrEqual(2);
   });
 });
