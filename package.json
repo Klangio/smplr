@@ -1,7 +1,7 @@
 {
-  "name": "smplr",
-  "version": "1.1.0",
-  "homepage": "https://github.com/danigb/smplr#readme",
+  "name": "@klangio/smplr",
+  "version": "1.1.0-klangio.2",
+  "homepage": "https://github.com/Klangio/smplr#readme",
   "description": "A Sampled collection of instruments",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -11,7 +11,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/danigb/smplr.git"
+    "url": "git+https://github.com/Klangio/smplr.git"
   },
   "keywords": [
     "sampler",
@@ -22,7 +22,7 @@
   "author": "danigb",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/danigb/smplr/issues"
+    "url": "https://github.com/Klangio/smplr/issues"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",
@@ -39,7 +39,7 @@
     "esbuild": "^0.28.1"
   },
   "publishConfig": {
-    "access": "public"
+    "registry": "https://npm.pkg.github.com"
   },
   "scripts": {
     "build": "tsup src/index.ts  --sourcemap --dts --format esm,cjs",
